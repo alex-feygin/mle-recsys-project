@@ -1,0 +1,11 @@
+2026-02-27 23:39:28,338  INFO      PASSED  test_service.py::test_cold_offline_returns_popular_items
+2026-02-27 23:39:28,343  INFO      PASSED  test_service.py::test_cold_online_is_empty
+2026-02-27 23:39:28,354  INFO      PASSED  test_service.py::test_cold_blended_equals_cold_recs
+2026-02-27 23:39:28,368  INFO      PASSED  test_service.py::test_warm_offline_returns_personal_recs
+2026-02-27 23:39:28,380  INFO      PASSED  test_service.py::test_warm_online_is_empty_without_history
+2026-02-27 23:39:28,440  INFO      PASSED  test_service.py::test_warm_blended_equals_offline_without_history
+2026-02-27 23:39:28,460  INFO      PASSED  test_service.py::test_get_events_returns_stored_events
+2026-02-27 23:39:28,482  INFO      PASSED  test_service.py::test_online_non_empty_after_events
+2026-02-27 23:39:28,513  INFO      PASSED  test_service.py::test_blended_length_and_no_duplicates
+2026-02-27 23:39:28,558  INFO      PASSED  test_service.py::test_blended_contains_both_offline_and_online
+2026-02-27 23:39:28,560  INFO      Session finished — exit status: 0 | passed: 10  failed: 0  skipped: 0
