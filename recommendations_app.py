@@ -1,14 +1,3 @@
-"""
-RecommendationService microservice.
-
-Runs at: http://127.0.0.1:8010
-
-Endpoints:
-  GET /recommendations_offline - ALS recs (cold fallback)
-  GET /recommendations_online  - content-based recs from a given events list
-  GET /blend                   - blend offline and online lists
-  GET /stats                   - request counters
-"""
 import asyncio
 import logging
 from contextlib import asynccontextmanager
@@ -27,9 +16,6 @@ ONLINE_HISTORY_DEPTH = 3
 recommendation_store_url = "http://127.0.0.1:8010"
 
 
-# ---------------------------------------------------------------------------
-# RecommendationService
-# ---------------------------------------------------------------------------
 class RecommendationService:
 
     def __init__(self, url: str = recommendation_store_url):
@@ -162,9 +148,6 @@ class RecommendationService:
         return blended[:k]
 
 
-# ---------------------------------------------------------------------------
-# Application setup
-# ---------------------------------------------------------------------------
 store = RecommendationService()
 
 
@@ -177,9 +160,6 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="RecommendationService", lifespan=lifespan)
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 @app.get("/recommendations_offline", summary="Offline ALS recommendations (cold fallback)")
 async def recommendations_offline(
     user_id: int,

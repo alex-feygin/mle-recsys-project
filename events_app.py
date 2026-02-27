@@ -1,12 +1,3 @@
-"""
-EventStore microservice.
-
-Runs at: http://127.0.0.1:8020
-
-Endpoints:
-  POST /put_event  - store a user event (most-recent first)
-  GET  /get_events - retrieve recent events for a user
-"""
 import logging
 from fastapi import FastAPI, Query
 
@@ -18,9 +9,6 @@ ONLINE_HISTORY_DEPTH = 3
 events_store_url = "http://127.0.0.1:8020"
 
 
-# ---------------------------------------------------------------------------
-# EventStore
-# ---------------------------------------------------------------------------
 class EventStore:
 
     def __init__(self, url: str = events_store_url, max_events_per_user: int = MAX_EVENTS_PER_USER):
@@ -39,18 +27,9 @@ class EventStore:
         """Return last k events for user."""
         return self.events.get(user_id, [])[:k]
 
-
-# ---------------------------------------------------------------------------
-# Application setup
-# ---------------------------------------------------------------------------
 event_store = EventStore()
-
 app = FastAPI(title="EventStore Service")
 
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 @app.post("/put_event", summary="Store a user interaction event")
 async def put_event(user_id: int, item_id: int):
     event_store.put(user_id, item_id)

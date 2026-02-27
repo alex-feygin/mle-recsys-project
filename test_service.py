@@ -1,22 +1,9 @@
-# -*- coding: utf-8 -*-
-"""
-Structured tests for the RecSys FastAPI service.
-
-Start all three services before running:
-    uvicorn events_app:app            --host 0.0.0.0 --port 8020
-    uvicorn recommendations_app:app   --host 0.0.0.0 --port 8010
-    uvicorn recommendation_service:app --host 0.0.0.0 --port 8000
-
-Run tests:
-    pytest test_service.py -v
-"""
 import pytest
 import requests
 
 BASE_URL = "http://localhost:8000"
 K = 10
 
-# Known IDs from artifacts produced by the notebook.
 # user_id == 1  -> has personal ALS recs AND track 628687 is in similar.parquet
 # user_id == 12 -> has personal ALS recs, never receives injected events (Case 2 isolation)
 WARM_USER_CASE2 = 12
@@ -29,9 +16,6 @@ COLD_USER = 2_374_581
 COLD_RECS_EXPECTED = [53404, 178529, 37384, 48951, 148345, 328683, 10216, 52100, 137670, 178495]
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
 @pytest.fixture(scope="session")
 def client():
     with requests.Session() as session:
@@ -50,10 +34,6 @@ def inject_events(client):
         params={"user_id": WARM_USER_CASE3, "item_id": WARM_USER_SEED_TRACK},
     )
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 def recs(client: requests.Session, endpoint: str, user_id: int) -> list:
     resp = client.get(f"{BASE_URL}{endpoint}", params={"user_id": user_id, "k": K})
     resp.raise_for_status()

@@ -1,19 +1,3 @@
-"""
-RecSys gateway microservice.
-
-Runs at: http://127.0.0.1:8000
-
-Composes two sub-services via HTTP:
-  EventStore            http://127.0.0.1:8020  (events_app.py)
-  RecommendationService http://127.0.0.1:8010  (recommendations_app.py)
-
-Endpoints:
-  POST /put_event               - store a user event
-  GET  /get_events              - retrieve recent events for a user
-  GET  /recommendations_offline - ALS recs (cold fallback)
-  GET  /recommendations_online  - content-based recs from recent events
-  GET  /recommendations         - blended offline + online
-"""
 import logging
 from contextlib import asynccontextmanager
 
@@ -24,7 +8,7 @@ logger = logging.getLogger("uvicorn.error")
 
 DEFAULT_K = 10
 MAX_EVENTS_PER_USER = 10
-ONLINE_HISTORY_DEPTH = 3   # how many recent events to use for online recs
+ONLINE_HISTORY_DEPTH = 3
 
 events_store_url = "http://127.0.0.1:8020"
 recommendation_store_url = "http://127.0.0.1:8010"
@@ -33,9 +17,6 @@ recommendation_store_url = "http://127.0.0.1:8010"
 _client: httpx.AsyncClient | None = None
 
 
-# ---------------------------------------------------------------------------
-# Lifespan
-# ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _client
@@ -43,10 +24,6 @@ async def lifespan(app: FastAPI):
     yield
     await _client.aclose()
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 async def _get(url: str, **params) -> dict:
     try:
         resp = await _client.get(url, params=params)
@@ -67,15 +44,9 @@ async def _post(url: str, **params) -> dict:
         raise HTTPException(status_code=502, detail=f"Upstream error: {exc}")
 
 
-# ---------------------------------------------------------------------------
-# Application setup
-# ---------------------------------------------------------------------------
 app = FastAPI(title="RecSys Gateway", lifespan=lifespan)
 
 
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 @app.post("/put_event", summary="Store a user interaction event")
 async def put_event(user_id: int, item_id: int):
     return await _post(f"{events_store_url}/put_event", user_id=user_id, item_id=item_id)
