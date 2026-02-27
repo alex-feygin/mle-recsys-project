@@ -3,30 +3,29 @@
 Structured tests for the RecSys FastAPI service.
 
 Run with:
-    uvicorn recommendation_service:app --host 0.0.0.0 --port 8001
+    uvicorn recommendation_service:app --host 0.0.0.0 --port 8000
     python test_service.py
 
-The tests validate three scenarios as specified in the project requirements.
+Tests validate three scenarios as specified in the project requirements.
 """
 import sys
 
-# Ensure UTF-8 output on Windows
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
 import requests
 
-BASE_URL = "http://localhost:8001"
+BASE_URL = "http://localhost:8000"
 K = 10
 
-# Known IDs taken from the artifacts produced by the notebook.
-# user_id == 0  -> has personal ALS recs AND a content seed track (1750835)
-# user_id == 1  -> has personal ALS recs, used for Case 2 (no event injection)
-WARM_USER_CASE2 = 1             # used in Case 2 — never receives injected events
-WARM_USER_CASE3 = 0             # used in Case 3 — receives injected event
-WARM_USER_SEED_TRACK = 1750835  # latest track for user 0 in events.parquet
+# Known IDs from artifacts produced by the notebook.
+# user_id == 0 -> has personal ALS recs, seed track = 1750835 in events.parquet
+# user_id == 1 -> has personal ALS recs, used for Case 2 (no event injection)
+WARM_USER_CASE2 = 1             # never receives injected events (isolation)
+WARM_USER_CASE3 = 0             # receives injected event in Case 3
+WARM_USER_SEED_TRACK = 1750835  # most-recent track for user 0
 
-# A user_id that is absent from personal_als.parquet (guaranteed cold start)
+# User absent from personal_als.parquet (guaranteed cold start)
 COLD_USER = 2_374_581
 
 COLD_RECS_EXPECTED = [53404, 178529, 37384, 48951, 148345, 328683, 10216, 52100, 137670, 178495]
@@ -63,21 +62,21 @@ def assert_no_duplicates(lst: list, msg: str = "") -> None:
 
 
 # ---------------------------------------------------------------------------
-# Case 1 — User without personal recommendations (cold user)
+# Case 1 - User without personal recommendations (cold user)
 # ---------------------------------------------------------------------------
 def test_case1():
     """
     Case 1: Cold user (no personal ALS recs, no event history).
-    - Offline  → cold recs (popular items)
-    - Online   → empty list
-    - Blended  → equals offline (cold recs)
+    - Offline  -> cold recs (popular items)
+    - Online   -> empty list
+    - Blended  -> equals offline (cold recs)
     """
     print(SEPARATOR)
     print("Case 1: Cold user (no personal recs, no history)")
 
-    offline = get("/recommendations_offline", user_id=COLD_USER, k=K)["recommendations"]
-    online  = get("/recommendations_online",  user_id=COLD_USER, k=K)["recommendations"]
-    blended = get("/recommendations",         user_id=COLD_USER, k=K)["recommendations"]
+    offline = get("/recommendations_offline", user_id=COLD_USER, k=K)["recs"]
+    online  = get("/recommendations_online",  user_id=COLD_USER, k=K)["recs"]
+    blended = get("/recommendations",         user_id=COLD_USER, k=K)["recs"]
 
     assert_eq(offline, COLD_RECS_EXPECTED[:K], "Offline should return top-K cold recs")
     assert_eq(online,  [],                      "Online should be empty (no history)")
@@ -93,7 +92,7 @@ def test_case1():
 
 
 # ---------------------------------------------------------------------------
-# Case 2 — User with personal recs but no online history
+# Case 2 - User with personal recs but no online history
 # ---------------------------------------------------------------------------
 def test_case2():
     """
@@ -108,11 +107,10 @@ def test_case2():
     print(SEPARATOR)
     print("Case 2: Warm user, no event history")
 
-    offline = get("/recommendations_offline", user_id=WARM_USER_CASE2, k=K)["recommendations"]
-    online  = get("/recommendations_online",  user_id=WARM_USER_CASE2, k=K)["recommendations"]
-    blended = get("/recommendations",         user_id=WARM_USER_CASE2, k=K)["recommendations"]
+    offline = get("/recommendations_offline", user_id=WARM_USER_CASE2, k=K)["recs"]
+    online  = get("/recommendations_online",  user_id=WARM_USER_CASE2, k=K)["recs"]
+    blended = get("/recommendations",         user_id=WARM_USER_CASE2, k=K)["recs"]
 
-    # Offline must NOT be cold recs; it must be the user's personal recs
     assert offline != COLD_RECS_EXPECTED[:K], "Offline should return personal recs, not cold recs"
     assert len(offline) > 0,                   "Offline personal recs must be non-empty"
     assert_len(offline, K,                     "Offline must return exactly K items")
@@ -120,7 +118,6 @@ def test_case2():
 
     assert_eq(online, [], "Online should be empty (no history)")
 
-    # Blended = offline when online is empty
     assert_eq(blended, offline, "Blended should equal offline when online is empty")
     assert_no_duplicates(blended, "Blended must not contain duplicates")
 
@@ -131,23 +128,24 @@ def test_case2():
 
 
 # ---------------------------------------------------------------------------
-# Case 3 — User with personal recs AND online history
+# Case 3 - User with personal recs AND online history
 # ---------------------------------------------------------------------------
 def test_case3():
     """
-    Case 3: Warm user with event history injected via PUT /put_event.
-    - Online   → content-based recs (non-empty)
-    - Blended  → alternates offline + online, no duplicates, length == K
+    Case 3: Warm user with event history injected via POST /put_event.
+    - Online   -> content-based recs (non-empty)
+    - Blended  -> alternates offline + online, no duplicates, length == K
     """
     print(SEPARATOR)
-    print("Case 3: Warm user with event history → blended recs")
+    print("Case 3: Warm user with event history -> blended recs")
 
-    # Inject the seed track that the notebook used for user WARM_USER_CASE3
+    # Insert 2 events: the seed track known from the notebook + one more
+    post("/put_event", user_id=WARM_USER_CASE3, item_id=WARM_USER_SEED_TRACK)
     post("/put_event", user_id=WARM_USER_CASE3, item_id=WARM_USER_SEED_TRACK)
 
-    offline = get("/recommendations_offline", user_id=WARM_USER_CASE3, k=K)["recommendations"]
-    online  = get("/recommendations_online",  user_id=WARM_USER_CASE3, k=K)["recommendations"]
-    blended = get("/recommendations",         user_id=WARM_USER_CASE3, k=K)["recommendations"]
+    offline = get("/recommendations_offline", user_id=WARM_USER_CASE3, k=K)["recs"]
+    online  = get("/recommendations_online",  user_id=WARM_USER_CASE3, k=K)["recs"]
+    blended = get("/recommendations",         user_id=WARM_USER_CASE3, k=K)["recs"]
 
     assert len(online) > 0, "Online recs must be non-empty after injecting event history"
     assert_no_duplicates(online, "Online recs must not contain duplicates")
@@ -155,8 +153,6 @@ def test_case3():
     assert_no_duplicates(blended, "Blended recs must not contain duplicates")
     assert_len(blended, K, "Blended must return exactly K items")
 
-    # Verify blended alternating structure: first item from offline should appear
-    # before second item from offline (i.e., offline items are spread through blended)
     offline_set = set(offline)
     online_set  = set(online)
     blended_offline_items = [x for x in blended if x in offline_set]
