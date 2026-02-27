@@ -34,9 +34,9 @@ class RecommendationService:
 
     def __init__(self, url: str = recommendation_store_url):
         self.url = url
-        self.personal = None   # dict: user_id -> list[item_id]
-        self.cold = None       # list[item_id]  (popularity desc)
-        self.content = None    # dict: track_id -> list[(similar_track_id, score)]
+        self.personal: dict[int, list[int]] | None = None
+        self.cold: list[int] | None = None
+        self.content: dict[int, list[tuple[int, float]]] | None = None
         self._stats = {
             "offline_requests": 0,
             "cold_fallbacks":   0,
