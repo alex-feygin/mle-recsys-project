@@ -56,7 +56,7 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
+# *.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -167,3 +167,8 @@ cython_debug/
 
 # project environment
 env_recsys_start/
+_archive/
+.vscode/
+catboost_info/
+recsys/
+.code_worspace.code-workspace
