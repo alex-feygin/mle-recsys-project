@@ -3,9 +3,15 @@ RecSys FastAPI microservice.
 
 Endpoints:
   POST /put_event               - store a user event
+  GET  /get_events              - retrieve recent events for a user
   GET  /recommendations_offline - ALS recs (cold fallback)
   GET  /recommendations_online  - content-based recs from recent events
   GET  /recommendations         - blended offline + online
+
+Architecture:
+  EventStore        runs at events_store_url        (default: http://127.0.0.1:8020)
+  RecommendationService runs at recommendation_store_url (default: http://127.0.0.1:8010)
+  This app composes both at the top-level URL (default: http://127.0.0.1:8000)
 """
 import logging
 from contextlib import asynccontextmanager
@@ -14,83 +20,77 @@ from pathlib import Path
 import pandas as pd
 from fastapi import FastAPI, Query
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)s  %(message)s",
-)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 RECS_DIR = Path(__file__).parent / "recsys" / "recommendations"
 DATA_DIR = Path(__file__).parent / "recsys" / "data"
+
 DEFAULT_K = 10
+MAX_EVENTS_PER_USER = 10
+ONLINE_HISTORY_DEPTH = 3   # how many recent events to use for online recs
+
+events_store_url = "http://127.0.0.1:8020"
+recommendation_store_url = "http://127.0.0.1:8010"
 
 
 # ---------------------------------------------------------------------------
-# Recommendation Storage Layer
+# RecommendationService
 # ---------------------------------------------------------------------------
-class RecommendationStore:
+class RecommendationService:
 
     def __init__(self):
         self.personal = None   # dict: user_id -> list[item_id]
         self.cold = None       # list[item_id]  (popularity desc)
-        self.content = None    # dict: seed_item_id -> list[(item_id, score)]
+        self.content = None    # dict: track_id -> list[(similar_track_id, score)]
 
     def load(self):
         """
         Load all parquet artifacts into memory.
-        - personal_als.parquet  -> personalized offline recommendations
-        - cold_recs.parquet     -> default (most popular) recommendations
-        - content_recs.parquet  -> cosine_similarity-based item2item recs
+        - personal_als.parquet -> personalized offline recommendations
+        - cold_recs.parquet    -> default (most popular) recommendations
+        - similar.parquet      -> item-to-item cosine similarity index
         """
         logger.info("Loading recommendation artifacts ...")
+        self._load_personal()
+        self._load_cold()
+        self._load_content()
 
-        # --- personal ALS recs: user_id -> ordered item_ids ---
-        df_als = pd.read_parquet(RECS_DIR / "personal_als.parquet")
+    def _load_personal(self):
+        """Load personal_als.parquet -> user_id: [item_id, ...]"""
+        personal_als = pd.read_parquet(RECS_DIR / "personal_als.parquet")
         self.personal = {
             int(uid): grp.sort_values("rank")["item_id"].astype(int).tolist()
-            for uid, grp in df_als.groupby("user_id")
+            for uid, grp in personal_als.groupby("user_id")
         }
         logger.info("Loaded personal_als: %d users", len(self.personal))
 
-        # --- cold recs: ordered item_ids by popularity ---
-        df_cold = pd.read_parquet(RECS_DIR / "cold_recs.parquet")
+    def _load_cold(self):
+        """Load cold_recs.parquet -> [item_id, ...] ordered by popularity."""
+        cold_recs = pd.read_parquet(RECS_DIR / "cold_recs.parquet")
         self.cold = (
-            df_cold.sort_values("score", ascending=False)["item_id"]
+            cold_recs.sort_values("score", ascending=False)["item_id"]
             .astype(int)
             .tolist()
         )
         logger.info("Loaded cold_recs: %d items", len(self.cold))
 
-        # --- content recs: seed_item -> [(similar_item, score), ...] ---
-        # content_recs.parquet stores per-user recs keyed by user_id (encoded).
-        # The notebook used each user's most-recent track as the seed.
-        # We recover the seed-track-per-user mapping from events.parquet and
-        # build an item-level lookup index.
-        df_content = pd.read_parquet(RECS_DIR / "content_recs.parquet")
-        df_events = pd.read_parquet(
-            DATA_DIR / "events.parquet",
-            columns=["user_id", "track_id", "track_seq"],
-        )
-        seed_map = (
-            df_events
-            .sort_values(["user_id", "track_seq"], ascending=[True, False])
-            .drop_duplicates("user_id")
-            .set_index("user_id")["track_id"]
-            .astype(int)
-            .to_dict()
-        )
-        df_content["seed_item"] = df_content["user_id"].astype(int).map(seed_map)
-        df_content = df_content.dropna(subset=["seed_item"])
-        df_content["seed_item"] = df_content["seed_item"].astype(int)
-
+    def _load_content(self):
+        """
+        Load similar.parquet -> track_id: [(similar_track_id, score), ...]
+        Schema: track_id, similar_track_id, score, rank
+        """
+        similar = pd.read_parquet(RECS_DIR / "similar.parquet")
+        similar = similar.dropna(subset=["similar_track_id"])
         self.content = {
-            int(seed): list(
-                zip(grp.sort_values("rank")["item_id"].astype(int).tolist(),
-                    grp.sort_values("rank")["score"].tolist())
+            int(tid): list(
+                zip(
+                    grp.sort_values("rank")["similar_track_id"].astype(int).tolist(),
+                    grp.sort_values("rank")["score"].tolist(),
+                )
             )
-            for seed, grp in df_content.groupby("seed_item")
+            for tid, grp in similar.groupby("track_id")
         }
-        logger.info("Loaded content_recs: %d seed items", len(self.content))
+        logger.info("Loaded similar: %d seed tracks", len(self.content))
 
     def get_offline(self, user_id: int, k: int) -> list:
         """
@@ -104,19 +104,18 @@ class RecommendationStore:
 
     def get_online(self, user_id: int, user_events: list, k: int) -> list:
         """
-        Generate online recommendations using content_recs.
-        - Use last 3 events
-        - Collect similar items
+        Generate online recommendations using similar.parquet.
+        - Receive pre-sliced events list (caller controls depth)
+        - Collect similar items for each seed
         - Sort by similarity score (descending)
         - Deduplicate (keep first occurrence)
         - Return top k
         """
-        seeds = user_events[:3]
-        if not seeds:
+        if not user_events:
             return []
 
         candidates: list[tuple[int, float]] = []
-        for seed in seeds:
+        for seed in user_events:
             candidates.extend(self.content.get(seed, []))
 
         if not candidates:
@@ -156,11 +155,11 @@ class RecommendationStore:
 
 
 # ---------------------------------------------------------------------------
-# Event Store
+# EventStore
 # ---------------------------------------------------------------------------
 class EventStore:
 
-    def __init__(self, max_events_per_user: int = 10):
+    def __init__(self, max_events_per_user: int = MAX_EVENTS_PER_USER):
         self.events: dict[int, list[int]] = {}
         self.max_events_per_user = max_events_per_user
 
@@ -179,8 +178,8 @@ class EventStore:
 # ---------------------------------------------------------------------------
 # Application setup
 # ---------------------------------------------------------------------------
-store = RecommendationStore()
-event_store = EventStore(max_events_per_user=10)
+store = RecommendationService()
+event_store = EventStore()
 
 # Counters for logging
 _offline_requests = 0
@@ -204,6 +203,15 @@ app = FastAPI(title="RecSys Service", lifespan=lifespan)
 def put_event(user_id: int, item_id: int):
     event_store.put(user_id, item_id)
     return {"user_id": user_id, "item_id": item_id, "stored": True}
+
+
+@app.get("/get_events", summary="Retrieve recent events for a user")
+def get_events(
+    user_id: int,
+    k: int = Query(ONLINE_HISTORY_DEPTH, ge=1, le=MAX_EVENTS_PER_USER),
+):
+    events = event_store.get(user_id, k)
+    return {"user_id": user_id, "events": events}
 
 
 @app.get("/recommendations_offline", summary="Offline ALS recommendations (cold fallback)")
@@ -231,7 +239,7 @@ def recommendations_online(
 ):
     global _online_requests
     _online_requests += 1
-    events = event_store.get(user_id, 3)
+    events = event_store.get(user_id, ONLINE_HISTORY_DEPTH)
     recs = store.get_online(user_id, events, k)
     logger.info(
         "online  | user=%d k=%d returned=%d [total=%d]",
@@ -245,7 +253,7 @@ def recommendations(
     user_id: int,
     k: int = Query(DEFAULT_K, ge=1, le=100),
 ):
-    events = event_store.get(user_id, 3)
+    events = event_store.get(user_id, ONLINE_HISTORY_DEPTH)
     recs_offline = store.get_offline(user_id, k)
     recs_online = store.get_online(user_id, events, k)
     recs = store.blend(recs_offline, recs_online, k)

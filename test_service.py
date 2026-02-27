@@ -19,11 +19,11 @@ BASE_URL = "http://localhost:8000"
 K = 10
 
 # Known IDs from artifacts produced by the notebook.
-# user_id == 0 -> has personal ALS recs, seed track = 1750835 in events.parquet
-# user_id == 1 -> has personal ALS recs, used for Case 2 (no event injection)
-WARM_USER_CASE2 = 1             # never receives injected events (isolation)
-WARM_USER_CASE3 = 0             # receives injected event in Case 3
-WARM_USER_SEED_TRACK = 1750835  # most-recent track for user 0
+# user_id == 1  -> has personal ALS recs AND track 628687 is in similar.parquet
+# user_id == 12 -> has personal ALS recs, used for Case 2 (never receives injected events)
+WARM_USER_CASE2 = 12            # never receives injected events (isolation from Case 3)
+WARM_USER_CASE3 = 1             # receives injected events in Case 3
+WARM_USER_SEED_TRACK = 628687   # track for user 1 that exists in similar.parquet
 
 # User absent from personal_als.parquet (guaranteed cold start)
 COLD_USER = 2_374_581
@@ -101,7 +101,7 @@ def test_case2():
     - Online   -> empty list
     - Blended  -> equals offline (personal recs)
 
-    Uses WARM_USER_CASE2 (user 1) which never receives injected events,
+    Uses WARM_USER_CASE2 (user 12) which never receives injected events,
     ensuring isolation from Case 3.
     """
     print(SEPARATOR)
@@ -139,9 +139,12 @@ def test_case3():
     print(SEPARATOR)
     print("Case 3: Warm user with event history -> blended recs")
 
-    # Insert 2 events: the seed track known from the notebook + one more
+    # Insert 2 events with a track that exists in similar.parquet
     post("/put_event", user_id=WARM_USER_CASE3, item_id=WARM_USER_SEED_TRACK)
     post("/put_event", user_id=WARM_USER_CASE3, item_id=WARM_USER_SEED_TRACK)
+
+    stored_events = get("/get_events", user_id=WARM_USER_CASE3, k=3)["events"]
+    assert len(stored_events) > 0, "get_events must return stored events"
 
     offline = get("/recommendations_offline", user_id=WARM_USER_CASE3, k=K)["recs"]
     online  = get("/recommendations_online",  user_id=WARM_USER_CASE3, k=K)["recs"]
