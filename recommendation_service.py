@@ -38,10 +38,22 @@ recommendation_store_url = "http://127.0.0.1:8010"
 # ---------------------------------------------------------------------------
 class RecommendationService:
 
-    def __init__(self):
+    def __init__(self, url: str = recommendation_store_url):
+        self.url = url
         self.personal = None   # dict: user_id -> list[item_id]
         self.cold = None       # list[item_id]  (popularity desc)
         self.content = None    # dict: track_id -> list[(similar_track_id, score)]
+        self._stats = {
+            "offline_requests": 0,
+            "cold_fallbacks":   0,
+            "online_requests":  0,
+        }
+
+    def stats(self) -> dict:
+        logger.info("Stats for recommendations")
+        for name, value in self._stats.items():
+            logger.info(f"{name:<30} {value} ")
+        return self._stats
 
     def load(self):
         """
@@ -145,9 +157,9 @@ class RecommendationService:
         seen: set[int] = set()
         max_len = max(len(recs_offline), len(recs_online))
         for i in range(max_len):
-            for lst in (recs_offline, recs_online):
-                if i < len(lst):
-                    item = lst[i]
+            for rec in (recs_offline, recs_online):
+                if i < len(rec):
+                    item = rec[i]
                     if item not in seen:
                         seen.add(item)
                         blended.append(item)
@@ -159,7 +171,8 @@ class RecommendationService:
 # ---------------------------------------------------------------------------
 class EventStore:
 
-    def __init__(self, max_events_per_user: int = MAX_EVENTS_PER_USER):
+    def __init__(self, url: str = events_store_url, max_events_per_user: int = MAX_EVENTS_PER_USER):
+        self.url = url
         self.events: dict[int, list[int]] = {}
         self.max_events_per_user = max_events_per_user
 
@@ -180,11 +193,6 @@ class EventStore:
 # ---------------------------------------------------------------------------
 store = RecommendationService()
 event_store = EventStore()
-
-# Counters for logging
-_offline_requests = 0
-_cold_fallbacks = 0
-_online_requests = 0
 
 
 @asynccontextmanager
@@ -219,15 +227,15 @@ def recommendations_offline(
     user_id: int,
     k: int = Query(DEFAULT_K, ge=1, le=100),
 ):
-    global _offline_requests, _cold_fallbacks
-    _offline_requests += 1
+    store._stats["offline_requests"] += 1
     is_cold = user_id not in store.personal
     if is_cold:
-        _cold_fallbacks += 1
+        store._stats["cold_fallbacks"] += 1
     recs = store.get_offline(user_id, k)
     logger.info(
         "offline | user=%d k=%d returned=%d cold=%s [total=%d cold_total=%d]",
-        user_id, k, len(recs), is_cold, _offline_requests, _cold_fallbacks,
+        user_id, k, len(recs), is_cold,
+        store._stats["offline_requests"], store._stats["cold_fallbacks"],
     )
     return {"recs": recs}
 
@@ -237,13 +245,12 @@ def recommendations_online(
     user_id: int,
     k: int = Query(DEFAULT_K, ge=1, le=100),
 ):
-    global _online_requests
-    _online_requests += 1
+    store._stats["online_requests"] += 1
     events = event_store.get(user_id, ONLINE_HISTORY_DEPTH)
     recs = store.get_online(user_id, events, k)
     logger.info(
         "online  | user=%d k=%d returned=%d [total=%d]",
-        user_id, k, len(recs), _online_requests,
+        user_id, k, len(recs), store._stats["online_requests"],
     )
     return {"recs": recs}
 
