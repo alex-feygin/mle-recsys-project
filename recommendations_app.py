@@ -9,6 +9,7 @@ Endpoints:
   GET /blend                   - blend offline and online lists
   GET /stats                   - request counters
 """
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -48,17 +49,19 @@ class RecommendationService:
             logger.info(f"{name:<30} {value} ")
         return self._stats
 
-    def load(self):
+    async def load(self):
         """
         Load all parquet artifacts into memory.
         - personal_als.parquet -> personalized offline recommendations
         - cold_recs.parquet    -> default (most popular) recommendations
         - similar.parquet      -> item-to-item cosine similarity index
+
+        Blocking pandas I/O runs in a thread pool via asyncio.to_thread.
         """
         logger.info("Loading recommendation artifacts ...")
-        self._load_personal()
-        self._load_cold()
-        self._load_content()
+        await asyncio.to_thread(self._load_personal)
+        await asyncio.to_thread(self._load_cold)
+        await asyncio.to_thread(self._load_content)
 
     def _load_personal(self):
         """Load personal_als.parquet -> user_id: [item_id, ...]"""
@@ -167,7 +170,7 @@ store = RecommendationService()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    store.load()
+    await store.load()
     yield
 
 
@@ -178,7 +181,7 @@ app = FastAPI(title="RecommendationService", lifespan=lifespan)
 # Endpoints
 # ---------------------------------------------------------------------------
 @app.get("/recommendations_offline", summary="Offline ALS recommendations (cold fallback)")
-def recommendations_offline(
+async def recommendations_offline(
     user_id: int,
     k: int = Query(DEFAULT_K, ge=1, le=100),
 ):
@@ -196,7 +199,7 @@ def recommendations_offline(
 
 
 @app.get("/recommendations_online", summary="Online content-based recommendations")
-def recommendations_online(
+async def recommendations_online(
     user_id: int,
     events: str = Query("", description="Comma-separated list of recent item IDs"),
     k: int = Query(DEFAULT_K, ge=1, le=100),
@@ -212,7 +215,7 @@ def recommendations_online(
 
 
 @app.get("/blend", summary="Blend offline and online recommendation lists")
-def blend(
+async def blend(
     recs_offline: str = Query("", description="Comma-separated offline item IDs"),
     recs_online: str = Query("", description="Comma-separated online item IDs"),
     k: int = Query(DEFAULT_K, ge=1, le=100),
@@ -224,5 +227,5 @@ def blend(
 
 
 @app.get("/stats", summary="Request counters")
-def stats():
+async def stats():
     return store.stats()

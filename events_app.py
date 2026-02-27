@@ -52,13 +52,13 @@ app = FastAPI(title="EventStore Service")
 # Endpoints
 # ---------------------------------------------------------------------------
 @app.post("/put_event", summary="Store a user interaction event")
-def put_event(user_id: int, item_id: int):
+async def put_event(user_id: int, item_id: int):
     event_store.put(user_id, item_id)
     return {"user_id": user_id, "item_id": item_id, "stored": True}
 
 
 @app.get("/get_events", summary="Retrieve recent events for a user")
-def get_events(
+async def get_events(
     user_id: int,
     k: int = Query(ONLINE_HISTORY_DEPTH, ge=1, le=MAX_EVENTS_PER_USER),
 ):
