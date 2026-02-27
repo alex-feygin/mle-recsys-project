@@ -15,7 +15,9 @@ The service is logically split into two stores, each exposed at its own URL:
 ## Project Structure
 
 ```
-├── recommendation_service.py   # FastAPI service (RecommendationService + EventStore)
+├── recommendation_service.py   # Gateway (port 8000) — composes the two sub-services
+├── recommendations_app.py      # RecommendationService (port 8010) — offline/online/blend
+├── events_app.py               # EventStore (port 8020) — put/get user events
 ├── test_service.py             # Service tests (3 scenarios)
 └── recsys/
     ├── recommendations/
@@ -29,11 +31,18 @@ The service is logically split into two stores, each exposed at its own URL:
 
 ## Running the Service
 
+Start all three services (each in its own terminal):
+
 ```bash
-uvicorn recommendation_service:app --host 0.0.0.0 --port 8000 --reload
+uvicorn events_app:app            --host 0.0.0.0 --port 8020
+uvicorn recommendations_app:app   --host 0.0.0.0 --port 8010
+uvicorn recommendation_service:app --host 0.0.0.0 --port 8000
 ```
 
-API docs: http://localhost:8000/docs
+API docs:
+- Gateway:               http://localhost:8000/docs
+- RecommendationService: http://localhost:8010/docs
+- EventStore:            http://localhost:8020/docs
 
 ## Endpoints
 
@@ -67,9 +76,9 @@ All recommendation endpoints return `{"recs": [...]}`.
 
 ## Running Tests
 
+Start all three services first, then:
+
 ```bash
-uvicorn recommendation_service:app --host 0.0.0.0 --port 8000
-# in another terminal:
 python test_service.py
 ```
 

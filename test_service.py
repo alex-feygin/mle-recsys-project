@@ -2,7 +2,9 @@
 """
 Structured tests for the RecSys FastAPI service.
 
-Run with:
+Run with (three terminals):
+    uvicorn events_app:app           --host 0.0.0.0 --port 8020
+    uvicorn recommendations_app:app  --host 0.0.0.0 --port 8010
     uvicorn recommendation_service:app --host 0.0.0.0 --port 8000
     python test_service.py
 
